@@ -7,13 +7,17 @@ import time
 import requests
 import json
 import pandas as pd
+import numpy as np
+from sklearn.linear_model import SGDClassifier
+from sklearn import svm
+from joblib import load
 from critical_path import get_cp
 from per_instance_variability import get_params
 
-SERVER_API = "http://192.168.49.2:32289"
+SERVER_API = "http://192.168.49.2:31529"
 
 TOTAL_TIME = 8*60 # seconds
-PAUSE_TIME_MIN = 10 # seconds
+PAUSE_TIME_MIN = 5 # seconds
 PAUSE_TIME_MAX = 30 # seconds
 
 #calculating total number of threads to use to saturate the machine
@@ -34,8 +38,13 @@ keys = [
     'io'
 ]
 
+collected = list()
+
+model = SGDClassifier(loss = 'hinge', penalty='l2')
+model = load('model/svm_model.joblib')
+
 def inject(dataframe):
-    num_types = random.randint(0, len(commands))
+    num_types = random.randint(1, len(commands))
     print("No of anomaly types to inject: {}".format(num_types))
     types = set()
     j = 0
@@ -53,20 +62,25 @@ def inject(dataframe):
         print(final_command)
         os.system(final_command)
         # running the trace collector as soon as the injection is complete
-        response = requests.get('{}/api/traces?lookback=12h&maxDuration=&minDuration=&service=nginx-web-server&limit=200&operation=%2Fwrk2-api%2Fpost%2Fcompose'.format(SERVER_API))
+        response = requests.get('{}/api/traces?limit=200&lookback=12h&service=nginx-web-server'.format(SERVER_API))
         trace_datas = json.loads(response.text)['data']
-        trace_data = trace_datas[0]
-        longest_path = get_cp(trace_data)
-        ri, ci = get_params(longest_path)
-        for r in ri:
-            row = {
-                'ri': r,
-                'ci': ci,
-                'anomaly': True,
-                'intensity': intensity,
-                'type': keys[anomaly_type],
-            }
-            dataframe = pd.concat([dataframe, pd.DataFrame([row])], ignore_index = True)
+        for trace_data in trace_datas:
+            if trace_data['traceID'] in collected:
+                continue
+            collected.append(trace_data['traceID'])
+            longest_path = get_cp(trace_data)
+            ri, ci = get_params(longest_path)
+            for r in ri:
+                result = model.predict(np.asarray([ci, r, intensity/16]).reshape((-1, 3)))[0]
+                row = {
+                    'ri': r,
+                    'ci': ci,
+                    'anomaly': True,
+                    'localization': result,
+                    'intensity': intensity,
+                    'type': keys[anomaly_type],
+                }
+                dataframe = pd.concat([dataframe, pd.DataFrame([row])], ignore_index = True)
     return dataframe
 
 if __name__ == "__main__":
@@ -78,6 +92,6 @@ if __name__ == "__main__":
         print('Injection round completed. Sleeping for %d seconds'%pause_time)
         time.sleep(pause_time)
         total_time += pause_time
-    dataframe.to_csv('data/anomaly_svm.csv', index = False)
+    dataframe.to_csv('result/injection_prediction.csv', index = False)
 
 

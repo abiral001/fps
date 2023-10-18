@@ -31,3 +31,4 @@ def get_cp(trace_data):
             break
     longest_path = longestPath(trace_data, trace_data['spans'][idx])
     return longest_path
+
