@@ -16,3 +16,6 @@ protobuf
 python_dateutil
 scikit_learn
 neo4j
+gym
+seaborn
+joblib
